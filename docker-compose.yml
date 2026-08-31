@@ -1,0 +1,14 @@
+name: apollo-local
+
+version: '0.0.1'
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: apollo-postgres
+    ports:
+      - '6969:5432'
+    environment:
+      POSTGRES_USER: apollo
+      POSTGRES_PASSWORD: apollo
+      POSTGRES_DB: apollo
