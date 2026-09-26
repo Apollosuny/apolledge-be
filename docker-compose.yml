@@ -11,4 +11,4 @@ services:
     environment:
       POSTGRES_USER: apollo
       POSTGRES_PASSWORD: apollo
-      POSTGRES_DB: apollo
+      POSTGRES_DB: apolledge
