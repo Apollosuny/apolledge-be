@@ -14,6 +14,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.UUID;
+
 @RestController
 @RequestMapping("${api.prefix}/transactions")
 @RequiredArgsConstructor
@@ -33,6 +35,17 @@ public class TransactionController {
         return transactionService.getTransactions(
                 currentUser.id(),
                 pageable
+        );
+    }
+
+    @GetMapping("/{transactionId}")
+    public TransactionResponse getTransaction(
+            @AuthenticationPrincipal AuthenticatedUser currentUser,
+            @PathVariable UUID transactionId
+    ) {
+        return transactionService.getTransaction(
+                currentUser.id(),
+                transactionId
         );
     }
 

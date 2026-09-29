@@ -1,13 +1,19 @@
 package com.apollosuny.apolledgebe.account.service;
 
+import com.apollosuny.apolledgebe.account.dto.AccountBalanceResponse;
 import com.apollosuny.apolledgebe.account.dto.AccountResponse;
 import com.apollosuny.apolledgebe.account.dto.CreateAccountRequest;
 import com.apollosuny.apolledgebe.account.entity.Account;
+import com.apollosuny.apolledgebe.account.entity.AccountType;
 import com.apollosuny.apolledgebe.account.mapper.AccountMapper;
 import com.apollosuny.apolledgebe.account.repository.AccountRepository;
+import com.apollosuny.apolledgebe.common.exception.BusinessException;
+import com.apollosuny.apolledgebe.transaction.entity.EntryDirection;
+import com.apollosuny.apolledgebe.transaction.repository.LedgerEntryRepository;
 import com.apollosuny.apolledgebe.user.entity.User;
 import com.apollosuny.apolledgebe.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +26,7 @@ public class AccountService {
 
     private final AccountRepository accountRepository;
     private final UserRepository userRepository;
+    private final LedgerEntryRepository ledgerEntryRepository;
     private final AccountMapper accountMapper;
 
     @Transactional(readOnly = true)
@@ -30,22 +37,60 @@ public class AccountService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public AccountBalanceResponse getBalance(
+            UUID userId,
+            UUID accountId
+    ) {
+        Account account = accountRepository
+                .findByIdAndUser_Id(accountId, userId)
+                .orElseThrow(() -> new BusinessException(
+                        "ACCOUNT_NOT_FOUND",
+                        "Account not found",
+                        HttpStatus.NOT_FOUND
+                ));
+
+        long totalDebit = ledgerEntryRepository.sumAmountByAccountAndDirection(
+                accountId,
+                EntryDirection.DEBIT
+        );
+
+        long totalCredit = ledgerEntryRepository.sumAmountByAccountAndDirection(
+                accountId,
+                EntryDirection.CREDIT
+        );
+
+        long balance = calculateBalance(
+                account.getType(),
+                totalDebit,
+                totalCredit
+        );
+
+        return new AccountBalanceResponse(accountId, balance);
+
+    }
+
     @Transactional
     public AccountResponse createAccount(
             UUID userId,
             CreateAccountRequest request
     ) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException(("User not found")));
+                .orElseThrow(() -> new BusinessException(
+                        "USER_NOT_FOUND",
+                        "User not found",
+                        HttpStatus.NOT_FOUND
+                ));
 
         Account parent = null;
 
         if (request.parentId() != null) {
-            parent = accountRepository.findById(request.parentId())
-                    .orElseThrow(() -> new IllegalArgumentException(("Parent not found")));
-            if (!parent.getUser().getId().equals(userId)) {
-                throw new IllegalArgumentException("Parent account does not belong to current user");
-            }
+            parent = accountRepository.findByIdAndUser_Id(request.parentId(), userId)
+                    .orElseThrow(() -> new BusinessException(
+                            "PARENT_ACCOUNT_NOT_FOUND",
+                            "Parent account not found",
+                            HttpStatus.NOT_FOUND
+                    ));
         }
 
         Account.AccountBuilder builder = Account.builder()
@@ -64,5 +109,17 @@ public class AccountService {
         Account savedAccount = accountRepository.save(account);
 
         return accountMapper.toResponse(savedAccount);
+    }
+
+    private long calculateBalance(
+            AccountType type,
+            long totalDebit,
+            long totalCredit
+    ) {
+        return switch (type) {
+            case ASSET, EXPENSE -> totalDebit - totalCredit;
+
+            case LIABILITY, INCOME, EQUITY -> totalCredit - totalDebit;
+        };
     }
 }
