@@ -51,7 +51,7 @@ public class TransactionController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public TransactionResponse createTransasction(
+    public TransactionResponse createTransaction(
             @AuthenticationPrincipal AuthenticatedUser currentUser,
             @Valid @RequestBody CreateTransactionRequest request
     ) {

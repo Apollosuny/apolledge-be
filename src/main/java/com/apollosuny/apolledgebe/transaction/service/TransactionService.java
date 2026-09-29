@@ -16,13 +16,17 @@ import com.apollosuny.apolledgebe.user.entity.User;
 import com.apollosuny.apolledgebe.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
@@ -31,6 +35,9 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class TransactionService {
+
+    private static final Set<String> SORTABLE_PROPERTIES = Set.of("occurredAt", "postedAt");
+
     private final TransactionRepository transactionRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
     private final AccountRepository accountRepository;
@@ -44,7 +51,7 @@ public class TransactionService {
     ) {
         Page<Transaction> transactions = transactionRepository.findAllByUser_Id(
                 userId,
-                pageable
+                withSafeSort(pageable)
         );
 
         if (transactions.isEmpty()) {
@@ -86,9 +93,7 @@ public class TransactionService {
                         HttpStatus.NOT_FOUND
                 ));
 
-        List<LedgerEntry> entries = ledgerEntryRepository.findAllByTransaction_Id(transactionId);
-
-        return transactionMapper.toResponse(transaction, entries);
+        return toResponse(transaction);
     }
 
     @Transactional
@@ -96,10 +101,25 @@ public class TransactionService {
             UUID userId,
             CreateTransactionRequest request
     ) {
+        String idempotencyKey = normalizeIdempotencyKey(request.idempotencyKey());
+
+        if (idempotencyKey != null) {
+            Optional<Transaction> existing = transactionRepository
+                    .findByUser_IdAndIdempotencyKey(userId, idempotencyKey);
+
+            if (existing.isPresent()) {
+                return toResponse(existing.get());
+            }
+        }
+
         validateBalancedEntries(request.entries());
 
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+                .orElseThrow(() -> new BusinessException(
+                        "USER_NOT_FOUND",
+                        "User not found",
+                        HttpStatus.NOT_FOUND
+                ));
 
         Map<UUID, Account> accounts = loadAndValidateAccounts(userId, request.entries());
 
@@ -108,10 +128,10 @@ public class TransactionService {
                 .occurredAt(request.occurredAt())
                 .note(request.note())
                 .receiptUrl(request.receiptUrl())
-                .idempotencyKey(request.idempotencyKey())
+                .idempotencyKey(idempotencyKey)
                 .build();
 
-        Transaction savedTransaction = transactionRepository.save(transaction);
+        Transaction savedTransaction = saveTransaction(transaction, idempotencyKey);
 
         List<LedgerEntry> entries = request.entries()
                 .stream()
@@ -131,23 +151,89 @@ public class TransactionService {
         return transactionMapper.toResponse(savedTransaction, savedEntries);
     }
 
+    private TransactionResponse toResponse(Transaction transaction) {
+        return transactionMapper.toResponse(
+                transaction,
+                ledgerEntryRepository.findAllByTransaction_Id(transaction.getId())
+        );
+    }
+
+    private Pageable withSafeSort(Pageable pageable) {
+        for (Sort.Order order : pageable.getSort()) {
+            if (!SORTABLE_PROPERTIES.contains(order.getProperty())) {
+                throw new BusinessException(
+                        "INVALID_SORT",
+                        "Sorting by '" + order.getProperty() + "' is not supported",
+                        HttpStatus.BAD_REQUEST
+                );
+            }
+        }
+
+        // id is a tie-breaker so rows sharing the same timestamp keep a stable order across pages
+        return PageRequest.of(
+                pageable.getPageNumber(),
+                pageable.getPageSize(),
+                pageable.getSort().and(Sort.by("id"))
+        );
+    }
+
+    private String normalizeIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return null;
+        }
+        return idempotencyKey.trim();
+    }
+
+    /**
+     * Two concurrent requests with the same key can both pass the lookup in createTransaction;
+     * the unique constraint (user_id, idempotency_key) is the real guard, so the loser fails here.
+     */
+    private Transaction saveTransaction(Transaction transaction, String idempotencyKey) {
+        try {
+            return transactionRepository.saveAndFlush(transaction);
+        } catch (DataIntegrityViolationException exception) {
+            if (idempotencyKey == null) {
+                throw exception;
+            }
+            throw new BusinessException(
+                    "IDEMPOTENCY_KEY_CONFLICT",
+                    "A request with this idempotency key is already being processed",
+                    HttpStatus.CONFLICT
+            );
+        }
+    }
+
     private void validateBalancedEntries(
             List<CreateLedgerEntryRequest> entries
     ) {
-        long totalDebit = entries.stream()
-                .filter(entry -> entry.direction() == EntryDirection.DEBIT)
-                .mapToLong(CreateLedgerEntryRequest::amountVnd)
-                .sum();
-
-        long totalCredit = entries.stream()
-                .filter(entry -> entry.direction() == EntryDirection.CREDIT)
-                .mapToLong(CreateLedgerEntryRequest::amountVnd)
-                .sum();
+        long totalDebit = sumAmount(entries, EntryDirection.DEBIT);
+        long totalCredit = sumAmount(entries, EntryDirection.CREDIT);
 
         if (totalDebit != totalCredit) {
             throw new BusinessException(
                     "TRANSACTION_NOT_BALANCED",
                     "Transaction is not balanced",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+    }
+
+    /**
+     * A plain long sum wraps around silently, which would let crafted amounts look balanced.
+     */
+    private long sumAmount(
+            List<CreateLedgerEntryRequest> entries,
+            EntryDirection direction
+    ) {
+        try {
+            return entries.stream()
+                    .filter(entry -> entry.direction() == direction)
+                    .mapToLong(CreateLedgerEntryRequest::amountVnd)
+                    .reduce(0L, Math::addExact);
+        } catch (ArithmeticException exception) {
+            throw new BusinessException(
+                    "AMOUNT_OUT_OF_RANGE",
+                    "Total amount is too large",
                     HttpStatus.BAD_REQUEST
             );
         }
@@ -161,18 +247,26 @@ public class TransactionService {
                 .map(CreateLedgerEntryRequest::accountId)
                 .collect(Collectors.toSet());
 
-        List<Account> accounts = accountRepository.findAllById(accountIds);
+        // Filtering by owner in the query makes "missing" and "someone else's" indistinguishable
+        List<Account> accounts = accountRepository.findAllByIdInAndUser_Id(accountIds, userId);
 
-        if (accounts.size() != accounts.size()) {
-            throw new IllegalArgumentException("One or more accounts do not exits");
+        if (accounts.size() != accountIds.size()) {
+            throw new BusinessException(
+                    "ACCOUNT_NOT_FOUND",
+                    "One or more accounts not found",
+                    HttpStatus.NOT_FOUND
+            );
         }
 
-        boolean containsForeignAccount = accounts.stream()
-                .anyMatch(account -> !account.getUser().getId().equals(userId));
+        boolean containsArchivedAccount = accounts.stream()
+                .anyMatch(account -> account.getArchivedAt() != null);
 
-        if (containsForeignAccount) {
-            throw new IllegalArgumentException("" +
-                    "One or more accounts do not belong to current users");
+        if (containsArchivedAccount) {
+            throw new BusinessException(
+                    "ACCOUNT_ARCHIVED",
+                    "Cannot post to an archived account",
+                    HttpStatus.CONFLICT
+            );
         }
 
         return accounts.stream()
