@@ -17,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -30,9 +31,12 @@ public class AccountService {
     private final AccountMapper accountMapper;
 
     @Transactional(readOnly = true)
-    public List<AccountResponse> getAccounts(UUID userId) {
-        return accountRepository.findAllByUser_Id(userId)
-                .stream()
+    public List<AccountResponse> getAccounts(UUID userId, boolean includeArchived) {
+        List<Account> accounts = includeArchived
+                ? accountRepository.findAllByUser_Id(userId)
+                : accountRepository.findAllByUser_IdAndArchivedAtIsNull(userId);
+
+        return accounts.stream()
                 .map(accountMapper::toResponse)
                 .toList();
     }
@@ -42,13 +46,7 @@ public class AccountService {
             UUID userId,
             UUID accountId
     ) {
-        Account account = accountRepository
-                .findByIdAndUser_Id(accountId, userId)
-                .orElseThrow(() -> new BusinessException(
-                        "ACCOUNT_NOT_FOUND",
-                        "Account not found",
-                        HttpStatus.NOT_FOUND
-                ));
+        Account account = getOwnedAccount(userId, accountId);
 
         long totalDebit = ledgerEntryRepository.sumAmountByAccountAndDirection(
                 accountId,
@@ -68,6 +66,24 @@ public class AccountService {
 
         return new AccountBalanceResponse(accountId, balance);
 
+    }
+
+    @Transactional
+    public AccountResponse archiveAccount(UUID userId, UUID accountId) {
+        Account account = getOwnedAccount(userId, accountId);
+
+        account.archive(Instant.now());
+
+        return accountMapper.toResponse(account);
+    }
+
+    @Transactional
+    public AccountResponse unarchiveAccount(UUID userId, UUID accountId) {
+        Account account = getOwnedAccount(userId, accountId);
+
+        account.unarchive();
+
+        return accountMapper.toResponse(account);
     }
 
     @Transactional
@@ -109,6 +125,16 @@ public class AccountService {
         Account savedAccount = accountRepository.save(account);
 
         return accountMapper.toResponse(savedAccount);
+    }
+
+    private Account getOwnedAccount(UUID userId, UUID accountId) {
+        return accountRepository
+                .findByIdAndUser_Id(accountId, userId)
+                .orElseThrow(() -> new BusinessException(
+                        "ACCOUNT_NOT_FOUND",
+                        "Account not found",
+                        HttpStatus.NOT_FOUND
+                ));
     }
 
     private long calculateBalance(

@@ -22,9 +22,10 @@ public class AccountController {
 
     @GetMapping
     public List<AccountResponse> getAccounts(
-            @AuthenticationPrincipal AuthenticatedUser user
+            @AuthenticationPrincipal AuthenticatedUser user,
+            @RequestParam(defaultValue = "false") boolean includeArchived
     ) {
-        return accountService.getAccounts(user.id());
+        return accountService.getAccounts(user.id(), includeArchived);
     }
 
     @GetMapping("/{accountId}/balance")
@@ -36,6 +37,22 @@ public class AccountController {
                 currentUser.id(),
                 accountId
         );
+    }
+
+    @PostMapping("/{accountId}/archive")
+    public AccountResponse archiveAccount(
+            @AuthenticationPrincipal AuthenticatedUser currentUser,
+            @PathVariable UUID accountId
+    ) {
+        return accountService.archiveAccount(currentUser.id(), accountId);
+    }
+
+    @PostMapping("/{accountId}/unarchive")
+    public AccountResponse unarchiveAccount(
+            @AuthenticationPrincipal AuthenticatedUser currentUser,
+            @PathVariable UUID accountId
+    ) {
+        return accountService.unarchiveAccount(currentUser.id(), accountId);
     }
 
     @PostMapping

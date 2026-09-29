@@ -48,4 +48,14 @@ public class Account {
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    public void archive(Instant archivedAt) {
+        if (this.archivedAt == null) {
+            this.archivedAt = archivedAt;
+        }
+    }
+
+    public void unarchive() {
+        this.archivedAt = null;
+    }
 }
