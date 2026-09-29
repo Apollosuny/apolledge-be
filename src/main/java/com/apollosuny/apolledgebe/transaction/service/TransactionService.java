@@ -9,6 +9,7 @@ import com.apollosuny.apolledgebe.transaction.dto.TransactionResponse;
 import com.apollosuny.apolledgebe.transaction.entity.EntryDirection;
 import com.apollosuny.apolledgebe.transaction.entity.LedgerEntry;
 import com.apollosuny.apolledgebe.transaction.entity.Transaction;
+import com.apollosuny.apolledgebe.transaction.entity.TransactionSource;
 import com.apollosuny.apolledgebe.transaction.mapper.TransactionMapper;
 import com.apollosuny.apolledgebe.transaction.repository.LedgerEntryRepository;
 import com.apollosuny.apolledgebe.transaction.repository.TransactionRepository;
@@ -24,6 +25,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -151,6 +153,44 @@ public class TransactionService {
             UUID userId,
             CreateTransactionRequest request
     ) {
+        return create(userId, request, TransactionSource.MANUAL, null);
+    }
+
+    /**
+     * Posts one occurrence of a standing order. The idempotency key makes a retried or
+     * re-run occurrence return the transaction already posted instead of duplicating it.
+     */
+    @Transactional
+    public TransactionResponse createStandingOrderTransaction(
+            UUID userId,
+            UUID standingOrderId,
+            Instant occurredAt,
+            String note,
+            UUID debitAccountId,
+            UUID creditAccountId,
+            long amountVnd,
+            String idempotencyKey
+    ) {
+        CreateTransactionRequest request = new CreateTransactionRequest(
+                occurredAt,
+                note,
+                null,
+                idempotencyKey,
+                List.of(
+                        new CreateLedgerEntryRequest(debitAccountId, EntryDirection.DEBIT, amountVnd),
+                        new CreateLedgerEntryRequest(creditAccountId, EntryDirection.CREDIT, amountVnd)
+                )
+        );
+
+        return create(userId, request, TransactionSource.STANDING_ORDER, standingOrderId);
+    }
+
+    private TransactionResponse create(
+            UUID userId,
+            CreateTransactionRequest request,
+            TransactionSource source,
+            UUID standingOrderId
+    ) {
         String idempotencyKey = normalizeIdempotencyKey(request.idempotencyKey());
 
         if (idempotencyKey != null) {
@@ -179,6 +219,8 @@ public class TransactionService {
                 .note(request.note())
                 .receiptUrl(request.receiptUrl())
                 .idempotencyKey(idempotencyKey)
+                .source(source)
+                .standingOrderId(standingOrderId)
                 .build();
 
         Transaction savedTransaction = saveTransaction(transaction, idempotencyKey);
