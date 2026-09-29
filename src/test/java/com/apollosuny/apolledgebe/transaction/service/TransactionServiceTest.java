@@ -41,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -307,6 +308,71 @@ class TransactionServiceTest {
 
         assertReverseError(original.getId(), "TRANSACTION_ALREADY_REVERSED", HttpStatus.CONFLICT);
         verify(ledgerEntryRepository, never()).saveAll(anyList());
+    }
+
+    // ---------- replaceTransaction ----------
+
+    @Test
+    void replaceTransaction_shouldReverseOriginalThenPostCorrectedTransaction() {
+        Transaction original = savedTransaction();
+        LedgerEntry originalDebit = entryOf(original, food, EntryDirection.DEBIT, 145_000L);
+        LedgerEntry originalCredit = entryOf(original, cash, EntryDirection.CREDIT, 145_000L);
+        when(transactionRepository.findByIdAndUser_Id(original.getId(), userId))
+                .thenReturn(Optional.of(original));
+        when(transactionRepository.existsByReverses_Id(original.getId())).thenReturn(false);
+        when(ledgerEntryRepository.findAllByTransaction_Id(original.getId()))
+                .thenReturn(List.of(originalDebit, originalCredit));
+        stubUserAndAccounts(cash, food);
+        stubSaveTransaction();
+        when(ledgerEntryRepository.saveAll(anyList()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        TransactionResponse response = transactionService.replaceTransaction(userId, original.getId(),
+                request(null,
+                        entry(food, EntryDirection.DEBIT, 45_000),
+                        entry(cash, EntryDirection.CREDIT, 45_000)));
+
+        ArgumentCaptor<Transaction> saved = ArgumentCaptor.forClass(Transaction.class);
+        verify(transactionRepository, times(2)).saveAndFlush(saved.capture());
+        assertThat(saved.getAllValues().get(0).getReverses()).isSameAs(original);
+        assertThat(saved.getAllValues().get(1).getReverses()).isNull();
+        assertThat(response.reversesId()).isNull();
+        assertThat(response.entries())
+                .extracting(e -> e.direction() + ":" + e.amountVnd())
+                .containsExactlyInAnyOrder("DEBIT:45000", "CREDIT:45000");
+    }
+
+    @Test
+    void replaceTransaction_shouldReturnExistingReplacement_whenIdempotencyKeyWasAlreadyUsed() {
+        Transaction replacement = Transaction.builder()
+                .id(UUID.randomUUID()).user(user).occurredAt(occurredAt).idempotencyKey("edit-1").build();
+        when(transactionRepository.findByUser_IdAndIdempotencyKey(userId, "edit-1"))
+                .thenReturn(Optional.of(replacement));
+        when(ledgerEntryRepository.findAllByTransaction_Id(replacement.getId())).thenReturn(List.of());
+
+        TransactionResponse response = transactionService.replaceTransaction(userId, UUID.randomUUID(),
+                request("edit-1",
+                        entry(food, EntryDirection.DEBIT, 45_000),
+                        entry(cash, EntryDirection.CREDIT, 45_000)));
+
+        assertThat(response.id()).isEqualTo(replacement.getId());
+        verify(transactionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void replaceTransaction_shouldNotPostReplacement_whenOriginalAlreadyReversed() {
+        Transaction original = savedTransaction();
+        when(transactionRepository.findByIdAndUser_Id(original.getId(), userId))
+                .thenReturn(Optional.of(original));
+        when(transactionRepository.existsByReverses_Id(original.getId())).thenReturn(true);
+
+        assertThatThrownBy(() -> transactionService.replaceTransaction(userId, original.getId(),
+                request(null,
+                        entry(food, EntryDirection.DEBIT, 45_000),
+                        entry(cash, EntryDirection.CREDIT, 45_000))))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getCode()).isEqualTo("TRANSACTION_ALREADY_REVERSED"));
+        verify(transactionRepository, never()).saveAndFlush(any());
     }
 
     // ---------- getTransactions ----------

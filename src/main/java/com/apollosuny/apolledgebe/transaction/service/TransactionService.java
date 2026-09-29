@@ -157,6 +157,34 @@ public class TransactionService {
     }
 
     /**
+     * "Edit" on an append-only ledger: reverse the original and post the corrected transaction
+     * in one database transaction, so either both happen or neither does (an invalid
+     * replacement rolls the reversal back). A retried request with the same idempotency key
+     * returns the replacement already posted instead of failing on the second reversal.
+     */
+    @Transactional
+    public TransactionResponse replaceTransaction(
+            UUID userId,
+            UUID transactionId,
+            CreateTransactionRequest request
+    ) {
+        String idempotencyKey = normalizeIdempotencyKey(request.idempotencyKey());
+
+        if (idempotencyKey != null) {
+            Optional<Transaction> existing = transactionRepository
+                    .findByUser_IdAndIdempotencyKey(userId, idempotencyKey);
+
+            if (existing.isPresent()) {
+                return toResponse(existing.get());
+            }
+        }
+
+        reverseTransaction(userId, transactionId);
+
+        return create(userId, request, TransactionSource.MANUAL, null);
+    }
+
+    /**
      * Posts one occurrence of a standing order. The idempotency key makes a retried or
      * re-run occurrence return the transaction already posted instead of duplicating it.
      */

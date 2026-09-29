@@ -61,6 +61,20 @@ public class TransactionController {
         );
     }
 
+    @PostMapping("/{transactionId}/replace")
+    @ResponseStatus(HttpStatus.CREATED)
+    public TransactionResponse replaceTransaction(
+            @AuthenticationPrincipal AuthenticatedUser currentUser,
+            @PathVariable UUID transactionId,
+            @Valid @RequestBody CreateTransactionRequest request
+    ) {
+        return transactionService.replaceTransaction(
+                currentUser.id(),
+                transactionId,
+                request
+        );
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public TransactionResponse createTransaction(
