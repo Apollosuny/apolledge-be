@@ -1,11 +1,11 @@
 package com.apollosuny.apolledgebe.user.controller;
 
+import com.apollosuny.apolledgebe.auth.security.AuthenticatedUser;
 import com.apollosuny.apolledgebe.user.dto.UserResponse;
 import com.apollosuny.apolledgebe.user.entity.UserProvider;
-import com.apollosuny.apolledgebe.user.mapper.UserMapper;
 import com.apollosuny.apolledgebe.user.service.UserService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -14,16 +14,24 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final UserService userService;
-    private final UserMapper userMapper;
+
+    @GetMapping("/me")
+    public UserResponse getCurrentUser(
+            @AuthenticationPrincipal AuthenticatedUser currentUser
+    ) {
+        return userService.getCurrentUser(currentUser.id());
+    }
 
     @GetMapping("/{username}")
-    public ResponseEntity<UserResponse> getUser(
+    public UserResponse getUser(
+            @AuthenticationPrincipal AuthenticatedUser currentUser,
             @PathVariable String username,
             @RequestParam UserProvider provider
     ) {
-        return userService.findByUsernameAndProvider(username, provider)
-                .map(userMapper::toResponse)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        return userService.getUserByUsername(
+                currentUser.id(),
+                username,
+                provider
+        );
     }
 }
