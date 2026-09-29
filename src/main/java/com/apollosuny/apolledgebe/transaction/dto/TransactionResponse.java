@@ -13,6 +13,7 @@ public record TransactionResponse(
         String note,
         String receiptUrl,
         TransactionSource source,
+        UUID reversesId,
         List<LedgerEntryResponse> entries
 ) {
 }

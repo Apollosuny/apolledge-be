@@ -238,6 +238,77 @@ class TransactionServiceTest {
                 .satisfies(e -> assertThat(e.accountId()).isEqualTo(cash.getId()));
     }
 
+    // ---------- reverseTransaction ----------
+
+    @Test
+    void reverseTransaction_shouldPostMirrorEntriesLinkedToOriginal() {
+        Transaction original = savedTransaction();
+        LedgerEntry debit = entryOf(original, food, EntryDirection.DEBIT, 50_000L);
+        LedgerEntry credit = entryOf(original, cash, EntryDirection.CREDIT, 50_000L);
+        when(transactionRepository.findByIdAndUser_Id(original.getId(), userId))
+                .thenReturn(Optional.of(original));
+        when(transactionRepository.existsByReverses_Id(original.getId())).thenReturn(false);
+        stubSaveTransaction();
+        when(ledgerEntryRepository.findAllByTransaction_Id(original.getId()))
+                .thenReturn(List.of(debit, credit));
+        when(ledgerEntryRepository.saveAll(anyList()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        TransactionResponse response = transactionService.reverseTransaction(userId, original.getId());
+
+        assertThat(response.reversesId()).isEqualTo(original.getId());
+        assertThat(response.occurredAt()).isEqualTo(original.getOccurredAt());
+        assertThat(response.entries())
+                .extracting(e -> e.accountId() + ":" + e.direction() + ":" + e.amountVnd())
+                .containsExactlyInAnyOrder(
+                        food.getId() + ":CREDIT:50000",
+                        cash.getId() + ":DEBIT:50000");
+    }
+
+    @Test
+    void reverseTransaction_shouldThrowNotFound_whenTransactionBelongsToAnotherUser() {
+        UUID transactionId = UUID.randomUUID();
+        when(transactionRepository.findByIdAndUser_Id(transactionId, userId)).thenReturn(Optional.empty());
+
+        assertReverseError(transactionId, "TRANSACTION_NOT_FOUND", HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void reverseTransaction_shouldThrowConflict_whenTransactionIsItselfAReversal() {
+        Transaction original = savedTransaction();
+        Transaction reversal = Transaction.builder()
+                .id(UUID.randomUUID()).user(user).occurredAt(occurredAt).reverses(original).build();
+        when(transactionRepository.findByIdAndUser_Id(reversal.getId(), userId))
+                .thenReturn(Optional.of(reversal));
+
+        assertReverseError(reversal.getId(), "CANNOT_REVERSE_A_REVERSAL", HttpStatus.CONFLICT);
+        verify(transactionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void reverseTransaction_shouldThrowConflict_whenAlreadyReversed() {
+        Transaction original = savedTransaction();
+        when(transactionRepository.findByIdAndUser_Id(original.getId(), userId))
+                .thenReturn(Optional.of(original));
+        when(transactionRepository.existsByReverses_Id(original.getId())).thenReturn(true);
+
+        assertReverseError(original.getId(), "TRANSACTION_ALREADY_REVERSED", HttpStatus.CONFLICT);
+        verify(transactionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void reverseTransaction_shouldThrowConflict_whenConcurrentReversalWinsTheUniqueIndex() {
+        Transaction original = savedTransaction();
+        when(transactionRepository.findByIdAndUser_Id(original.getId(), userId))
+                .thenReturn(Optional.of(original));
+        when(transactionRepository.existsByReverses_Id(original.getId())).thenReturn(false);
+        when(transactionRepository.saveAndFlush(any(Transaction.class)))
+                .thenThrow(new DataIntegrityViolationException("uq_transactions_reverses_id"));
+
+        assertReverseError(original.getId(), "TRANSACTION_ALREADY_REVERSED", HttpStatus.CONFLICT);
+        verify(ledgerEntryRepository, never()).saveAll(anyList());
+    }
+
     // ---------- getTransactions ----------
 
     @Test
@@ -286,13 +357,33 @@ class TransactionServiceTest {
                 .thenReturn(List.of(accounts));
     }
 
+    private Transaction savedTransaction() {
+        return Transaction.builder()
+                .id(UUID.randomUUID()).user(user).occurredAt(occurredAt).build();
+    }
+
+    private LedgerEntry entryOf(Transaction transaction, Account account, EntryDirection direction, long amount) {
+        return LedgerEntry.builder()
+                .id(UUID.randomUUID()).transaction(transaction).account(account)
+                .direction(direction).amountVnd(amount).occurredAt(occurredAt).build();
+    }
+
+    private void assertReverseError(UUID transactionId, String expectedCode, HttpStatus expectedStatus) {
+        assertThatThrownBy(() -> transactionService.reverseTransaction(userId, transactionId))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getCode()).isEqualTo(expectedCode);
+                    assertThat(ex.getStatus()).isEqualTo(expectedStatus);
+                });
+    }
+
     private void stubSaveTransaction() {
         when(transactionRepository.saveAndFlush(any(Transaction.class)))
                 .thenAnswer(invocation -> {
                     Transaction t = invocation.getArgument(0);
                     return Transaction.builder()
                             .id(UUID.randomUUID()).user(t.getUser()).occurredAt(t.getOccurredAt())
-                            .note(t.getNote()).idempotencyKey(t.getIdempotencyKey()).build();
+                            .note(t.getNote()).idempotencyKey(t.getIdempotencyKey())
+                            .reverses(t.getReverses()).build();
                 });
     }
 

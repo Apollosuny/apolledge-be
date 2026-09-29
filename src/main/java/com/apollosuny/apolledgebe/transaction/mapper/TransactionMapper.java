@@ -26,6 +26,7 @@ public class TransactionMapper {
                 transaction.getNote(),
                 transaction.getReceiptUrl(),
                 transaction.getSource(),
+                transaction.getReverses() != null ? transaction.getReverses().getId() : null,
                 entryResponses
         );
     }

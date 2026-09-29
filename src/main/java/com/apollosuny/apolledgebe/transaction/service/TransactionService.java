@@ -85,15 +85,65 @@ public class TransactionService {
             UUID userId,
             UUID transactionId
     ) {
-        Transaction transaction = transactionRepository
-                .findByIdAndUser_Id(transactionId, userId)
-                .orElseThrow(() -> new BusinessException(
-                        "TRANSACTION_NOT_FOUND",
-                        "Transaction not found",
-                        HttpStatus.NOT_FOUND
-                ));
+        return toResponse(getOwnedTransaction(userId, transactionId));
+    }
 
-        return toResponse(transaction);
+    /**
+     * The ledger is append-only: a mistake is corrected by posting a mirror transaction
+     * (same amounts, opposite directions) instead of editing or deleting history.
+     * The reversal keeps the original occurredAt so period reports net to zero;
+     * postedAt records when the correction was made.
+     */
+    @Transactional
+    public TransactionResponse reverseTransaction(
+            UUID userId,
+            UUID transactionId
+    ) {
+        Transaction original = getOwnedTransaction(userId, transactionId);
+
+        if (original.getReverses() != null) {
+            throw new BusinessException(
+                    "CANNOT_REVERSE_A_REVERSAL",
+                    "A reversal transaction cannot be reversed",
+                    HttpStatus.CONFLICT
+            );
+        }
+
+        if (transactionRepository.existsByReverses_Id(transactionId)) {
+            throw transactionAlreadyReversed();
+        }
+
+        Transaction reversal = Transaction.builder()
+                .user(original.getUser())
+                .occurredAt(original.getOccurredAt())
+                .note("Reversal of " + transactionId)
+                .reverses(original)
+                .build();
+
+        Transaction savedReversal;
+        try {
+            savedReversal = transactionRepository.saveAndFlush(reversal);
+        } catch (DataIntegrityViolationException exception) {
+            // uq_transactions_reverses_id: a concurrent request reversed it first
+            throw transactionAlreadyReversed();
+        }
+
+        List<LedgerEntry> mirroredEntries = ledgerEntryRepository
+                .findAllByTransaction_Id(transactionId)
+                .stream()
+                .map(entry -> LedgerEntry.builder()
+                        .transaction(savedReversal)
+                        .account(entry.getAccount())
+                        .direction(opposite(entry.getDirection()))
+                        .amountVnd(entry.getAmountVnd())
+                        .occurredAt(savedReversal.getOccurredAt())
+                        .build())
+                .toList();
+
+        return transactionMapper.toResponse(
+                savedReversal,
+                ledgerEntryRepository.saveAll(mirroredEntries)
+        );
     }
 
     @Transactional
@@ -149,6 +199,28 @@ public class TransactionService {
         List<LedgerEntry> savedEntries = ledgerEntryRepository.saveAll(entries);
 
         return transactionMapper.toResponse(savedTransaction, savedEntries);
+    }
+
+    private Transaction getOwnedTransaction(UUID userId, UUID transactionId) {
+        return transactionRepository
+                .findByIdAndUser_Id(transactionId, userId)
+                .orElseThrow(() -> new BusinessException(
+                        "TRANSACTION_NOT_FOUND",
+                        "Transaction not found",
+                        HttpStatus.NOT_FOUND
+                ));
+    }
+
+    private EntryDirection opposite(EntryDirection direction) {
+        return direction == EntryDirection.DEBIT ? EntryDirection.CREDIT : EntryDirection.DEBIT;
+    }
+
+    private BusinessException transactionAlreadyReversed() {
+        return new BusinessException(
+                "TRANSACTION_ALREADY_REVERSED",
+                "Transaction has already been reversed",
+                HttpStatus.CONFLICT
+        );
     }
 
     private TransactionResponse toResponse(Transaction transaction) {

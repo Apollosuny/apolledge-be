@@ -11,6 +11,7 @@ import java.util.UUID;
 
 public interface TransactionRepository extends JpaRepository<Transaction, UUID> {
     Page<Transaction> findAllByUser_Id(UUID userId, Pageable pageable);
+    boolean existsByReverses_Id(UUID reversesId);
     Optional<Transaction> findByIdAndUser_Id(UUID id, UUID userId);
     Optional<Transaction> findByUser_IdAndIdempotencyKey(UUID userId, String idempotencyKey);
 }

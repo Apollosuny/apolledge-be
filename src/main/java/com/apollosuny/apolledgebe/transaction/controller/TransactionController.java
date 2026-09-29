@@ -49,6 +49,18 @@ public class TransactionController {
         );
     }
 
+    @PostMapping("/{transactionId}/reverse")
+    @ResponseStatus(HttpStatus.CREATED)
+    public TransactionResponse reverseTransaction(
+            @AuthenticationPrincipal AuthenticatedUser currentUser,
+            @PathVariable UUID transactionId
+    ) {
+        return transactionService.reverseTransaction(
+                currentUser.id(),
+                transactionId
+        );
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public TransactionResponse createTransaction(
