@@ -74,6 +74,21 @@ public class JwtService {
         return UUID.fromString(claims.getSubject());
     }
 
+    /**
+     * @throws JwtException if the token is malformed, expired, tampered with or not a refresh token
+     * @throws IllegalArgumentException if the token is blank or its subject is not a UUID
+     */
+    public RefreshTokenClaims parseRefreshToken(String token) {
+        Claims claims = parseToken(token, getRefreshKey());
+
+        validateTokenType(claims, "REFRESH");
+
+        return new RefreshTokenClaims(
+                UUID.fromString(claims.getSubject()),
+                claims.getIssuedAt().toInstant()
+        );
+    }
+
     public boolean isAccessTokenValid(String token) {
         try {
             Claims claims = parseToken(token, getAccessKey());

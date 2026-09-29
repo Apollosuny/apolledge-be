@@ -1,7 +1,9 @@
 package com.apollosuny.apolledgebe.auth.controller;
 
 import com.apollosuny.apolledgebe.auth.dto.LoginRequest;
+import com.apollosuny.apolledgebe.auth.dto.RefreshTokenRequest;
 import com.apollosuny.apolledgebe.auth.dto.RegisterRequest;
+import com.apollosuny.apolledgebe.auth.dto.TokenRefreshResponse;
 import com.apollosuny.apolledgebe.auth.dto.TokenResponse;
 import com.apollosuny.apolledgebe.auth.service.AuthService;
 import jakarta.validation.Valid;
@@ -30,5 +32,12 @@ public class AuthController {
             @Valid @RequestBody RegisterRequest request
     ) {
         return authService.register(request);
+    }
+
+    @PostMapping("/refresh")
+    public TokenRefreshResponse refresh(
+            @Valid @RequestBody RefreshTokenRequest request
+    ) {
+        return authService.refresh(request.refreshToken());
     }
 }

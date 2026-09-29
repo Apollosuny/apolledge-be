@@ -5,11 +5,16 @@ import com.apollosuny.apolledgebe.auth.dto.RegisterRequest;
 import com.apollosuny.apolledgebe.auth.dto.TokenRefreshResponse;
 import com.apollosuny.apolledgebe.auth.dto.TokenResponse;
 import com.apollosuny.apolledgebe.auth.security.JwtService;
+import com.apollosuny.apolledgebe.auth.security.RefreshTokenClaims;
+import com.apollosuny.apolledgebe.common.exception.BusinessException;
 import com.apollosuny.apolledgebe.user.entity.User;
 import com.apollosuny.apolledgebe.user.entity.UserProvider;
 import com.apollosuny.apolledgebe.user.mapper.UserMapper;
 import com.apollosuny.apolledgebe.user.repository.UserRepository;
+import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -19,7 +24,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.UUID;
+import java.time.temporal.ChronoUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -56,7 +61,7 @@ public class AuthService {
                 );
 
         if (exists) {
-            throw new IllegalArgumentException("Username already exists");
+            throw usernameAlreadyExists();
         }
 
         User user = User.builder()
@@ -67,21 +72,53 @@ public class AuthService {
                 .jwtValidFrom(Instant.now())
                 .build();
 
-        userRepository.save(user);
+        // The existence check above is racy; the unique (username, provider) constraint is the real guard.
+        try {
+            user = userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException exception) {
+            throw usernameAlreadyExists();
+        }
 
         return issueToken(user);
     }
 
     public TokenRefreshResponse refresh(String refreshToken) {
-        if (!jwtService.isRefreshTokenValid(refreshToken)) {
-            throw new IllegalArgumentException("Invalid refresh token");
+        RefreshTokenClaims claims = parseRefreshToken(refreshToken);
+
+        User user = userRepository.findById(claims.userId())
+                .orElseThrow(AuthService::invalidRefreshToken);
+
+        // JWT iat has second precision, so compare against jwtValidFrom truncated to seconds.
+        // Moving jwtValidFrom forward revokes every refresh token issued before it.
+        if (claims.issuedAt().isBefore(user.getJwtValidFrom().truncatedTo(ChronoUnit.SECONDS))) {
+            throw invalidRefreshToken();
         }
 
-        UUID userId = jwtService.extractUserIdFromRefreshToken(refreshToken);
+        return new TokenRefreshResponse(jwtService.generateAccessToken(user.getId()));
+    }
 
-        String newAccessToken = jwtService.generateAccessToken(userId);
+    private RefreshTokenClaims parseRefreshToken(String refreshToken) {
+        try {
+            return jwtService.parseRefreshToken(refreshToken);
+        } catch (JwtException | IllegalArgumentException exception) {
+            throw invalidRefreshToken();
+        }
+    }
 
-        return new TokenRefreshResponse(newAccessToken);
+    private static BusinessException invalidRefreshToken() {
+        return new BusinessException(
+                "INVALID_REFRESH_TOKEN",
+                "Refresh token is invalid or expired",
+                HttpStatus.UNAUTHORIZED
+        );
+    }
+
+    private static BusinessException usernameAlreadyExists() {
+        return new BusinessException(
+                "USERNAME_ALREADY_EXISTS",
+                "Username already exists",
+                HttpStatus.CONFLICT
+        );
     }
 
     private TokenResponse issueToken(User user) {
