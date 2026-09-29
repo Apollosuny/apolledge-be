@@ -1,5 +1,6 @@
 package com.apollosuny.apolledgebe.account.controller;
 
+import com.apollosuny.apolledgebe.account.dto.AccountBalanceResponse;
 import com.apollosuny.apolledgebe.account.dto.AccountResponse;
 import com.apollosuny.apolledgebe.account.dto.CreateAccountRequest;
 import com.apollosuny.apolledgebe.account.service.AccountService;
@@ -10,6 +11,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("${api.prefix}/accounts")
@@ -23,6 +25,17 @@ public class AccountController {
             @AuthenticationPrincipal AuthenticatedUser user
     ) {
         return accountService.getAccounts(user.id());
+    }
+
+    @GetMapping("/{accountId}/balance")
+    public AccountBalanceResponse getBalance(
+            @AuthenticationPrincipal AuthenticatedUser currentUser,
+            @PathVariable UUID accountId
+    ) {
+        return accountService.getBalance(
+                currentUser.id(),
+                accountId
+        );
     }
 
     @PostMapping

@@ -73,6 +73,24 @@ public class TransactionService {
         });
     }
 
+    @Transactional(readOnly = true)
+    public TransactionResponse getTransaction(
+            UUID userId,
+            UUID transactionId
+    ) {
+        Transaction transaction = transactionRepository
+                .findByIdAndUser_Id(transactionId, userId)
+                .orElseThrow(() -> new BusinessException(
+                        "TRANSACTION_NOT_FOUND",
+                        "Transaction not found",
+                        HttpStatus.NOT_FOUND
+                ));
+
+        List<LedgerEntry> entries = ledgerEntryRepository.findAllByTransaction_Id(transactionId);
+
+        return transactionMapper.toResponse(transaction, entries);
+    }
+
     @Transactional
     public TransactionResponse createTransaction(
             UUID userId,
