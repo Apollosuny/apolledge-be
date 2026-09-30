@@ -7,9 +7,11 @@ import com.apollosuny.apolledgebe.account.service.AccountService;
 import com.apollosuny.apolledgebe.auth.security.AuthenticatedUser;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -31,11 +33,14 @@ public class AccountController {
     @GetMapping("/{accountId}/balance")
     public AccountBalanceResponse getBalance(
             @AuthenticationPrincipal AuthenticatedUser currentUser,
-            @PathVariable UUID accountId
+            @PathVariable UUID accountId,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant asOf
     ) {
         return accountService.getBalance(
                 currentUser.id(),
-                accountId
+                accountId,
+                asOf
         );
     }
 

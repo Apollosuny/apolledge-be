@@ -25,6 +25,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -49,8 +50,7 @@ class AccountServiceTest {
     private AccountService accountService;
 
     @Test
-    void getBalance_shouldCalculateDebitMinusCredit_whenAccountIsAsset() {
-        // Arrange
+    void getBalance_shouldReturnNetDebit_whenAccountIsAsset() {
         UUID userId = UUID.randomUUID();
         UUID accountId = UUID.randomUUID();
 
@@ -61,29 +61,20 @@ class AccountServiceTest {
 
         when(accountRepository.findByIdAndUser_Id(accountId, userId))
                 .thenReturn(Optional.of(account));
+        when(ledgerEntryRepository.sumNetDebitByAccount(accountId, EntryDirection.DEBIT))
+                .thenReturn(9_900_000L);
 
-        when(ledgerEntryRepository.sumAmountByAccountAndDirection(
-                accountId,
-                EntryDirection.DEBIT
-        )).thenReturn(10_000_000L);
+        AccountBalanceResponse response = accountService.getBalance(userId, accountId, null);
 
-        when(ledgerEntryRepository.sumAmountByAccountAndDirection(
-                accountId,
-                EntryDirection.CREDIT
-        )).thenReturn(100_000L);
-
-        // Act
-        AccountBalanceResponse response =
-                accountService.getBalance(userId, accountId);
-
-        // Assert
         assertThat(response.accountId()).isEqualTo(accountId);
         assertThat(response.balanceVnd()).isEqualTo(9_900_000L);
+        assertThat(response.asOf()).isNull();
+        verify(ledgerEntryRepository, never()).sumNetDebitByAccountAsOf(any(), any(), any());
     }
 
     @ParameterizedTest
     @EnumSource(value = AccountType.class, names = {"LIABILITY", "INCOME", "EQUITY"})
-    void getBalance_shouldCalculateCreditMinusDebit_whenAccountHasCreditNormalBalance(AccountType type) {
+    void getBalance_shouldNegateNetDebit_whenAccountHasCreditNormalBalance(AccountType type) {
         UUID userId = UUID.randomUUID();
         UUID accountId = UUID.randomUUID();
 
@@ -94,14 +85,35 @@ class AccountServiceTest {
 
         when(accountRepository.findByIdAndUser_Id(accountId, userId))
                 .thenReturn(Optional.of(account));
-        when(ledgerEntryRepository.sumAmountByAccountAndDirection(accountId, EntryDirection.DEBIT))
-                .thenReturn(200_000L);
-        when(ledgerEntryRepository.sumAmountByAccountAndDirection(accountId, EntryDirection.CREDIT))
-                .thenReturn(5_000_000L);
+        when(ledgerEntryRepository.sumNetDebitByAccount(accountId, EntryDirection.DEBIT))
+                .thenReturn(-4_800_000L);
 
-        AccountBalanceResponse response = accountService.getBalance(userId, accountId);
+        AccountBalanceResponse response = accountService.getBalance(userId, accountId, null);
 
         assertThat(response.balanceVnd()).isEqualTo(4_800_000L);
+    }
+
+    @Test
+    void getBalance_shouldSumOnlyEntriesUpToAsOf_whenAsOfIsGiven() {
+        UUID userId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        Instant asOf = Instant.parse("2026-06-30T16:59:59Z");
+
+        Account account = Account.builder()
+                .type(AccountType.LIABILITY)
+                .name("Credit card")
+                .build();
+
+        when(accountRepository.findByIdAndUser_Id(accountId, userId))
+                .thenReturn(Optional.of(account));
+        when(ledgerEntryRepository.sumNetDebitByAccountAsOf(accountId, asOf, EntryDirection.DEBIT))
+                .thenReturn(-1_200_000L);
+
+        AccountBalanceResponse response = accountService.getBalance(userId, accountId, asOf);
+
+        assertThat(response.balanceVnd()).isEqualTo(1_200_000L);
+        assertThat(response.asOf()).isEqualTo(asOf);
+        verify(ledgerEntryRepository, never()).sumNetDebitByAccount(any(), any());
     }
 
     @Test
@@ -112,7 +124,7 @@ class AccountServiceTest {
         when(accountRepository.findByIdAndUser_Id(accountId, userId))
                 .thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> accountService.getBalance(userId, accountId))
+        assertThatThrownBy(() -> accountService.getBalance(userId, accountId, null))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(ex -> {
                     BusinessException be = (BusinessException) ex;

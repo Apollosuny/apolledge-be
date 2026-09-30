@@ -15,21 +15,34 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, UUID> 
     List<LedgerEntry> findAllByTransaction_Id(UUID transactionId);
     List<LedgerEntry> findAllByTransaction_IdIn(Collection<UUID> transactionIds);
 
+    /**
+     * Debits minus credits over every entry of the account, in one pass.
+     * Includes future-dated entries, matching what the account currently holds on the books.
+     */
     @Query("""
-        select coalesce(
-            sum(
-                case 
-                    when e.direction = :direction then e.amountVnd
-                    else 0
-                end
-                ), 0
-            )
+        select coalesce(sum(case when e.direction = :debit then e.amountVnd else -e.amountVnd end), 0)
         from LedgerEntry e
         where e.account.id = :accountId
     """)
-    long sumAmountByAccountAndDirection(
+    long sumNetDebitByAccount(
             @Param("accountId") UUID accountId,
-            @Param("direction")EntryDirection direction
+            @Param("debit") EntryDirection debit
+    );
+
+    /**
+     * Debits minus credits for entries that occurred at or before {@code asOf}.
+     * Filters on occurredAt, so backdated entries and reversals are reflected on their business date.
+     */
+    @Query("""
+        select coalesce(sum(case when e.direction = :debit then e.amountVnd else -e.amountVnd end), 0)
+        from LedgerEntry e
+        where e.account.id = :accountId
+          and e.occurredAt <= :asOf
+    """)
+    long sumNetDebitByAccountAsOf(
+            @Param("accountId") UUID accountId,
+            @Param("asOf") Instant asOf,
+            @Param("debit") EntryDirection debit
     );
 
     /**

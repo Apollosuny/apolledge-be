@@ -44,28 +44,18 @@ public class AccountService {
     @Transactional(readOnly = true)
     public AccountBalanceResponse getBalance(
             UUID userId,
-            UUID accountId
+            UUID accountId,
+            Instant asOf
     ) {
         Account account = getOwnedAccount(userId, accountId);
 
-        long totalDebit = ledgerEntryRepository.sumAmountByAccountAndDirection(
-                accountId,
-                EntryDirection.DEBIT
-        );
+        long netDebit = asOf == null
+                ? ledgerEntryRepository.sumNetDebitByAccount(accountId, EntryDirection.DEBIT)
+                : ledgerEntryRepository.sumNetDebitByAccountAsOf(accountId, asOf, EntryDirection.DEBIT);
 
-        long totalCredit = ledgerEntryRepository.sumAmountByAccountAndDirection(
-                accountId,
-                EntryDirection.CREDIT
-        );
+        long balance = calculateBalance(account.getType(), netDebit);
 
-        long balance = calculateBalance(
-                account.getType(),
-                totalDebit,
-                totalCredit
-        );
-
-        return new AccountBalanceResponse(accountId, balance);
-
+        return new AccountBalanceResponse(accountId, balance, asOf);
     }
 
     @Transactional
@@ -139,13 +129,12 @@ public class AccountService {
 
     private long calculateBalance(
             AccountType type,
-            long totalDebit,
-            long totalCredit
+            long netDebit
     ) {
         return switch (type) {
-            case ASSET, EXPENSE -> totalDebit - totalCredit;
+            case ASSET, EXPENSE -> netDebit;
 
-            case LIABILITY, INCOME, EQUITY -> totalCredit - totalDebit;
+            case LIABILITY, INCOME, EQUITY -> -netDebit;
         };
     }
 }
