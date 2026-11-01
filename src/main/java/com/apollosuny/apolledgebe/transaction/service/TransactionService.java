@@ -39,6 +39,9 @@ import java.util.stream.Collectors;
 public class TransactionService {
 
     private static final Set<String> SORTABLE_PROPERTIES = Set.of("occurredAt", "postedAt");
+    // Stand-ins for an open-ended period: a null bound cannot be typed by Postgres in a JPQL comparison.
+    private static final Instant EARLIEST_OCCURRED_AT = Instant.parse("0001-01-01T00:00:00Z");
+    private static final Instant LATEST_OCCURRED_AT = Instant.parse("9999-12-31T00:00:00Z");
 
     private final TransactionRepository transactionRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
@@ -49,10 +52,24 @@ public class TransactionService {
     @Transactional(readOnly = true)
     public Page<TransactionResponse> getTransactions(
             UUID userId,
+            Instant from,
+            Instant to,
+            boolean activeOnly,
             Pageable pageable
     ) {
-        Page<Transaction> transactions = transactionRepository.findAllByUser_Id(
+        if (from != null && to != null && !from.isBefore(to)) {
+            throw new BusinessException(
+                    "INVALID_PERIOD",
+                    "'from' must be before 'to'",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
+
+        Page<Transaction> transactions = transactionRepository.findInPeriod(
                 userId,
+                from != null ? from : EARLIEST_OCCURRED_AT,
+                to != null ? to : LATEST_OCCURRED_AT,
+                activeOnly,
                 withSafeSort(pageable)
         );
 

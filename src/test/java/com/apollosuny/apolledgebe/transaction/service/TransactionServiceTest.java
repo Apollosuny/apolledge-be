@@ -39,6 +39,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -378,10 +379,19 @@ class TransactionServiceTest {
     // ---------- getTransactions ----------
 
     @Test
+    void getTransactions_shouldRejectEmptyPeriod() {
+        Instant at = Instant.parse("2026-11-01T00:00:00Z");
+
+        assertThatThrownBy(() -> transactionService.getTransactions(userId, at, at, true, PageRequest.of(0, 20)))
+                .isInstanceOfSatisfying(BusinessException.class, ex ->
+                        assertThat(ex.getCode()).isEqualTo("INVALID_PERIOD"));
+    }
+
+    @Test
     void getTransactions_shouldRejectSortByNonWhitelistedProperty() {
         Pageable pageable = PageRequest.of(0, 20, Sort.by("user.password"));
 
-        assertThatThrownBy(() -> transactionService.getTransactions(userId, pageable))
+        assertThatThrownBy(() -> transactionService.getTransactions(userId, null, null, false, pageable))
                 .isInstanceOfSatisfying(BusinessException.class, ex -> {
                     assertThat(ex.getCode()).isEqualTo("INVALID_SORT");
                     assertThat(ex.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -392,13 +402,13 @@ class TransactionServiceTest {
     @Test
     void getTransactions_shouldAddIdTieBreakerToSort() {
         Pageable pageable = PageRequest.of(1, 10, Sort.by(Sort.Direction.DESC, "occurredAt"));
-        when(transactionRepository.findAllByUser_Id(any(), any(Pageable.class)))
+        when(transactionRepository.findInPeriod(any(), any(), any(), anyBoolean(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(), pageable, 0));
 
-        Page<TransactionResponse> page = transactionService.getTransactions(userId, pageable);
+        Page<TransactionResponse> page = transactionService.getTransactions(userId, null, null, false, pageable);
 
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
-        verify(transactionRepository).findAllByUser_Id(any(), captor.capture());
+        verify(transactionRepository).findInPeriod(any(), any(), any(), anyBoolean(), captor.capture());
         assertThat(captor.getValue().getPageNumber()).isEqualTo(1);
         assertThat(captor.getValue().getPageSize()).isEqualTo(10);
         assertThat(captor.getValue().getSort()).containsExactly(

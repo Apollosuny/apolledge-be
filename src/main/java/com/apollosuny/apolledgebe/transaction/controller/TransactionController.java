@@ -10,10 +10,12 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @RestController
@@ -26,6 +28,11 @@ public class TransactionController {
     @GetMapping
     public Page<TransactionResponse> getTransactions(
             @AuthenticationPrincipal AuthenticatedUser currentUser,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
+            @RequestParam(defaultValue = "false") boolean activeOnly,
             @PageableDefault(
                     size = 20,
                     sort = "occurredAt",
@@ -34,6 +41,9 @@ public class TransactionController {
     ) {
         return transactionService.getTransactions(
                 currentUser.id(),
+                from,
+                to,
+                activeOnly,
                 pageable
         );
     }
