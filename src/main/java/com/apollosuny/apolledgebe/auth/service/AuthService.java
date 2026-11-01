@@ -1,5 +1,6 @@
 package com.apollosuny.apolledgebe.auth.service;
 
+import com.apollosuny.apolledgebe.account.service.AccountService;
 import com.apollosuny.apolledgebe.auth.dto.LoginRequest;
 import com.apollosuny.apolledgebe.auth.dto.RegisterRequest;
 import com.apollosuny.apolledgebe.auth.dto.TokenRefreshResponse;
@@ -22,9 +23,11 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -35,6 +38,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final UserMapper userMapper;
     private final UserRepository userRepository;
+    private final AccountService accountService;
 
     public TokenResponse login(LoginRequest request) {
         Authentication authentication = authenticationManager.authenticate(
@@ -50,6 +54,7 @@ public class AuthService {
         return issueToken(user);
     }
 
+    @Transactional
     public TokenResponse register(RegisterRequest request) {
         String username = request.username()
                 .trim()
@@ -79,7 +84,19 @@ public class AuthService {
             throw usernameAlreadyExists();
         }
 
+        accountService.createDefaultAccounts(user);
+
         return issueToken(user);
+    }
+
+    /**
+     * Revokes every refresh token issued so far. Access tokens stay valid until they expire,
+     * because the JWT filter does not hit the database.
+     */
+    @Transactional
+    public void logout(UUID userId) {
+        userRepository.findById(userId)
+                .ifPresent(user -> user.setJwtValidFrom(Instant.now()));
     }
 
     public TokenRefreshResponse refresh(String refreshToken) {

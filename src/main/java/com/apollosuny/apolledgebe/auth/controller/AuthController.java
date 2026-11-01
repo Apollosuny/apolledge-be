@@ -5,12 +5,16 @@ import com.apollosuny.apolledgebe.auth.dto.RefreshTokenRequest;
 import com.apollosuny.apolledgebe.auth.dto.RegisterRequest;
 import com.apollosuny.apolledgebe.auth.dto.TokenRefreshResponse;
 import com.apollosuny.apolledgebe.auth.dto.TokenResponse;
+import com.apollosuny.apolledgebe.auth.security.AuthenticatedUser;
 import com.apollosuny.apolledgebe.auth.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -39,5 +43,11 @@ public class AuthController {
             @Valid @RequestBody RefreshTokenRequest request
     ) {
         return authService.refresh(request.refreshToken());
+    }
+
+    @PostMapping("/logout")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void logout(@AuthenticationPrincipal AuthenticatedUser currentUser) {
+        authService.logout(currentUser.id());
     }
 }

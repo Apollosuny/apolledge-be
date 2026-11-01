@@ -1,5 +1,6 @@
 package com.apollosuny.apolledgebe.auth.service;
 
+import com.apollosuny.apolledgebe.account.service.AccountService;
 import com.apollosuny.apolledgebe.auth.dto.RegisterRequest;
 import com.apollosuny.apolledgebe.auth.dto.TokenRefreshResponse;
 import com.apollosuny.apolledgebe.auth.dto.TokenResponse;
@@ -48,6 +49,9 @@ class AuthServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private AccountService accountService;
+
     private JwtService jwtService;
     private AuthService authService;
 
@@ -60,10 +64,39 @@ class AuthServiceTest {
                 Duration.ofDays(30)
         ));
         authService = new AuthService(
-                authenticationManager, passwordEncoder, jwtService, userMapper, userRepository);
+                authenticationManager, passwordEncoder, jwtService, userMapper, userRepository, accountService);
+    }
+
+    // ---------- logout ----------
+
+    @Test
+    void logout_shouldInvalidateRefreshTokensIssuedBeforeIt() {
+        UUID userId = UUID.randomUUID();
+        Instant issuedBefore = Instant.now().minusSeconds(60);
+        User user = User.builder().id(userId).jwtValidFrom(issuedBefore).build();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        authService.logout(userId);
+
+        assertThat(user.getJwtValidFrom()).isAfter(issuedBefore);
     }
 
     // ---------- register ----------
+
+    @Test
+    void register_shouldCreateDefaultAccountsForTheNewUser() {
+        when(userRepository.existsByUsernameAndProvider("trung", UserProvider.LOCAL)).thenReturn(false);
+        when(passwordEncoder.encode("password1")).thenReturn("hashed");
+        when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> {
+            User saved = invocation.getArgument(0);
+            saved.setId(UUID.randomUUID());
+            return saved;
+        });
+
+        authService.register(new RegisterRequest("trung", "trung@example.com", "password1"));
+
+        verify(accountService).createDefaultAccounts(any(User.class));
+    }
 
     @Test
     void register_shouldNormalizeInputHashPasswordAndIssueTokens() {

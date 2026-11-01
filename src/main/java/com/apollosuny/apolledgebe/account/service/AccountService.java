@@ -30,6 +30,36 @@ public class AccountService {
     private final LedgerEntryRepository ledgerEntryRepository;
     private final AccountMapper accountMapper;
 
+    /** Icons are the design's Material Symbols names; each client maps them to its own glyphs. */
+    private record DefaultAccount(AccountType type, String name, String icon) {
+    }
+
+    private static final List<DefaultAccount> DEFAULT_ACCOUNTS = List.of(
+            new DefaultAccount(AccountType.ASSET, "Tiền mặt", "payments"),
+            new DefaultAccount(AccountType.EXPENSE, "Ăn uống", "restaurant"),
+            new DefaultAccount(AccountType.EXPENSE, "Đi lại", "directions_car"),
+            new DefaultAccount(AccountType.EXPENSE, "Nhà cửa", "home"),
+            new DefaultAccount(AccountType.EXPENSE, "Mua sắm", "shopping_bag"),
+            new DefaultAccount(AccountType.EXPENSE, "Sức khoẻ", "medication"),
+            new DefaultAccount(AccountType.EXPENSE, "Giải trí", "sports_esports"),
+            new DefaultAccount(AccountType.EXPENSE, "Khác", "more_horiz"),
+            new DefaultAccount(AccountType.INCOME, "Lương", "payments"),
+            new DefaultAccount(AccountType.INCOME, "Thu nhập khác", "sell")
+    );
+
+    /** Without a wallet and categories a new user has nowhere to post their first transaction. */
+    @Transactional
+    public void createDefaultAccounts(User user) {
+        accountRepository.saveAll(DEFAULT_ACCOUNTS.stream()
+                .map(account -> Account.builder()
+                        .user(user)
+                        .type(account.type())
+                        .name(account.name())
+                        .icon(account.icon())
+                        .build())
+                .toList());
+    }
+
     @Transactional(readOnly = true)
     public List<AccountResponse> getAccounts(UUID userId, boolean includeArchived) {
         List<Account> accounts = includeArchived
