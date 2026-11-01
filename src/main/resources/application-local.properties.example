@@ -1,0 +1,3 @@
+# Local development only: run with SPRING_PROFILES_ACTIVE=local. Never activate on a deployed environment.
+jwt.access-secret=<at-least-32-random-bytes: openssl rand -base64 48>
+jwt.refresh-secret=<at-least-32-random-bytes: openssl rand -base64 48>
